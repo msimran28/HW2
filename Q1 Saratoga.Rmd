@@ -1,0 +1,150 @@
+---
+title: "Q1 Saratoga"
+author: "Simran, Swatee & David"
+date: "06/03/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(mosaic)
+library(foreach)
+library(knitr)
+library(rmarkdown)
+library(FNN)
+library(dplyr)
+data(SaratogaHouses)
+summary(SaratogaHouses)
+load("/Users/msimran28/Q1 Saratoga.R")
+```
+
+#Variables defined
+```{r chunk1, echo = FALSE, include=FALSE}
+SaratogaHouses$new <- ifelse(SaratogaHouses$age == 0, 1,0)
+#SaratogaHouses$new
+
+housevalue <- SaratogaHouses$price - SaratogaHouses$landValue
+# head(housevalue)
+heating_electric <- SaratogaHouses[grep("electric", SaratogaHouses$heating), ]
+# head(heating_electric)
+heating_steam <- SaratogaHouses[grep("hot water/steam", SaratogaHouses$heating), ]
+# head(heating_steam)
+heating_hotair <- SaratogaHouses[grep("hot air", SaratogaHouses$heating), ]
+# head(heating_hotair)
+
+fuel_oil <- SaratogaHouses[grep("oil", SaratogaHouses$fuel), ]
+# head(fuel_oil)
+fuel_gas <- SaratogaHouses[grep("gas", SaratogaHouses$fuel), ]
+# head(fuel_gas)
+fuel_electric <- SaratogaHouses[grep("electric", SaratogaHouses$fuel), ]
+# head(fuel_electric)
+```
+
+
+```{r chunk2, echo = FALSE}
+lm_base = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + fireplaces +
+           heating + bathrooms + rooms + fuel + centralAir + new, data = SaratogaHouses)
+lm_own = lm(price ~ lotSize + pctCollege  + heating + bathrooms + bedrooms 
+         + rooms + fuel + centralAir + new + landValue + new*lotSize
+         + centralAir*heating + pctCollege*age + landValue*fuel + heating*bedrooms
+         , data = SaratogaHouses)
+summary(lm_base)
+summary(lm_own)
+```
+
+
+```{r chunk3, echo = FALSE, include = FALSE}
+N = nrow(SaratogaHouses)
+train = round(0.8*N)
+test = (N-train)
+
+rmse = function(y, yhat) {
+  sqrt( mean( (y - yhat)^2 ) )
+}
+```
+
+
+```{r chunk4, echo = FALSE, include = FALSE}
+rmse1 <- NULL
+rmse2 <- NULL
+for (i in seq(1:200)){
+  #Picking data up for training and testing
+  train_cases = sample.int(N, train, replace=FALSE)
+  test_cases = setdiff(1:N, train_cases)
+  
+  #Define the train-test data sets (for all X's and Y)
+  saratoga_train = SaratogaHouses[train_cases,]
+  saratoga_test = SaratogaHouses[test_cases,]
+#Training
+#Base model
+lm1 = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + fireplaces +
+           heating + bathrooms + rooms + fuel + centralAir + new , data=saratoga_train)
+#Hand-built Model
+lm2 = lm(price ~ lotSize + pctCollege  + heating  + bathrooms + bedrooms 
+         + rooms + fuel + centralAir + new + landValue + new*lotSize
+         + centralAir*heating + pctCollege*age + landValue*fuel + heating*bedrooms
+         , data=saratoga_train)
+
+#Testing 
+yhat_test1 = predict(lm1, saratoga_test)
+yhat_test2 = predict(lm2, saratoga_test)
+
+#Run it on the actual and the predicted values
+rmse1[i]= rmse(saratoga_test$price, yhat_test1)
+rmse2[i]= rmse(saratoga_test$price, yhat_test2)
+}
+```
+
+#Averaging the out-of-sample rmse
+```{r chunk5, echo = FALSE}
+ mean(rmse1)
+ mean(rmse2)
+```
+
+#KNN (Non-parametric model)
+```{r chunk6, echo = FALSE, include = FALSE}
+knn_model = do(100)*{
+N = nrow(SaratogaHouses)
+train = round(0.8*N)
+test = (N-train)
+
+train_cases = sample.int(N, train, replace=FALSE)
+test_cases = setdiff(1:N, train_cases)
+  
+saratoga_train = SaratogaHouses[train_cases,]
+saratoga_test = SaratogaHouses[test_cases,]
+
+Xtrain = model.matrix(~ lotSize + pctCollege  + heating  + bathrooms + bedrooms 
+                      + rooms + fuel + centralAir + new + landValue - 1, data=saratoga_train)
+Xtest = model.matrix(~ lotSize + pctCollege  + heating  + bathrooms + bedrooms 
+                     + rooms + fuel + centralAir + new + landValue - 1, data=saratoga_test)
+Ytrain = saratoga_train$price
+Ytest = saratoga_test$price
+
+#Scaling the features (Standardization)
+scale_train = apply(Xtrain, 2, sd) 
+Xtilde_train = scale(Xtrain, scale = scale_train)
+Xtilde_test = scale(Xtest, scale = scale_train) 
+
+#The for loop 
+library(foreach)
+k_grid = seq(2,100)
+rmse_grid = foreach(K = k_grid, .combine='c') %do% {
+  knn_model = knn.reg(Xtilde_train, Xtilde_test, Ytrain, k=K)
+  rmse(Ytest, knn_model$pred)
+}
+}
+ knn_model_mean = colMeans(knn_model)
+```
+ 
+#Plot KNN vs RMSE
+```{r chunk7, echo = FALSE}
+#Plotting 
+plot(k_grid, knn_model_mean)
+abline(h=rmse(Ytest, yhat_test2))
+```
+
+
+
+#Summary: 
+I found that variables telling the same thing could be eliminated. For example, if you just want to know if the house is new or not then just knowing the age is sufficient and makes the binary variable 'new' unecessary to know. Having said this I couldn't eliminate rooms because it seems like bathrooms and bedrooms are not the only type of rooms looked out for when deciding the former's number in a house. I tested if newer houses affect lot size and found that they increase pricing. I also tested if heating (hot air) affected the central air enough to affect pricing and found that it did. It looks like age of the house is correlated with the percentage of college graduates residing in the neighbourhood and the higher either of those numbers, the higher would the price be. The fuel availability is correlated with the land value and that in turn affects the price as well. 
